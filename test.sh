@@ -64,5 +64,6 @@ downloaded=$("$root/gh-pr-image" download --pr 7 --dir "$tmp/downloads")
 [[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png" ]]
 [[ $(<"$downloaded") == 'fake png' ]]
 grep -Fq 'repos/facundoPri/demo/contents/gh-pr-images/pr-7/123-456-1-screen_shot.png?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
+grep -Fq 'Accept: application/vnd.github.raw' "$tmp/gh.log"
 
 printf 'ok\n'

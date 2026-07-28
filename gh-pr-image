@@ -153,7 +153,8 @@ if [[ $command == download ]]; then
     path=${paths[$i]}
     destination=${destinations[$i]}
     temporary=$(mktemp "$download_dir/.gh-pr-image.XXXXXX")
-    if gh api -H 'Accept: application/vnd.github.raw+json' \
+    # gh 2.96 corrupts binary responses with raw+json; the raw media type returns exact bytes.
+    if gh api -H 'Accept: application/vnd.github.raw' \
       "repos/$repo/contents/$path?ref=$sha" >"$temporary"; then
       mv -f "$temporary" "$destination"
       printf '%s\n' "$destination"
