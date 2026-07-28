@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub PR Images"
+  short_description: "Upload and place PR screenshots with gh"
+  default_prompt: "Use $gh-pr-image to upload this screenshot and place it in the target pull request."
