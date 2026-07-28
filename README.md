@@ -119,7 +119,13 @@ Install the Agent Skill with the open `skills` CLI:
 npx skills add facundoPri/gh-pr-image
 ```
 
-The installer discovers [`skills/gh-pr-image`](skills/gh-pr-image) directly from the repository and lets you choose the agent and installation scope. A GitHub release is not required; releases are only useful when a fixed version is desired.
+The installer discovers [`skills/gh-pr-image`](skills/gh-pr-image) directly from the repository's default branch and lets you choose the agent and installation scope. No release or version pin is required.
+
+Pull future changes with:
+
+```sh
+npx skills update gh-pr-image
+```
 
 ## Download images for AI inspection
 
