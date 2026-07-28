@@ -113,13 +113,13 @@ Pull requests from forks and Dependabot normally receive a read-only `GITHUB_TOK
 
 ## Agent skill
 
-This repository publishes an Agent Skill that teaches coding agents the operation-selection, placement, CI, and verification workflow:
+Install the Agent Skill with the open `skills` CLI:
 
 ```sh
-gh skill install facundoPri/gh-pr-image gh-pr-image --agent codex --scope user
+npx skills add facundoPri/gh-pr-image
 ```
 
-The source lives in [`skills/gh-pr-image`](skills/gh-pr-image). `gh skill` is currently a preview GitHub CLI feature.
+The installer discovers [`skills/gh-pr-image`](skills/gh-pr-image) directly from the repository and lets you choose the agent and installation scope. A GitHub release is not required; releases are only useful when a fixed version is desired.
 
 ## Download images for AI inspection
 
