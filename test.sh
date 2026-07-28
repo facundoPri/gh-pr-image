@@ -14,7 +14,13 @@ printf '%s\n' "$*" >>"$GH_PR_IMAGE_TEST_LOG"
 case "$1 $2" in
   "repo view") printf 'facundoPri/demo\n' ;;
   "pr view")
-    if [[ " $* " == *" --json body "* ]]; then printf 'Existing body\n'; else printf '7\n'; fi
+    if [[ " $* " == *" --json body,comments "* ]]; then
+      printf '%s\n' '![screen](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/123-456-1-screen_shot.png?raw=true)'
+    elif [[ " $* " == *" --json body "* ]]; then
+      printf 'Existing body\n'
+    else
+      printf '7\n'
+    fi
     ;;
   "pr comment") cat >"$GH_PR_IMAGE_TEST_COMMENT"; printf 'https://github.com/facundoPri/demo/pull/7#issuecomment-1\n' ;;
   "pr edit") cat >"$GH_PR_IMAGE_TEST_BODY"; printf 'https://github.com/facundoPri/demo/pull/7\n' ;;
@@ -32,6 +38,7 @@ case "$1 $2" in
       *) printf 'unexpected API call: %s\n' "$*" >&2; exit 1 ;;
     esac
     ;;
+  "api -H") printf 'fake png' ;;
   *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
 esac
 EOF
@@ -52,5 +59,10 @@ grep -Fq 'https://github.com/facundoPri/demo/blob/555555555555555555555555555555
 "$root/gh-pr-image" "$tmp/screen shot.png" --pr 7 --body >/dev/null
 grep -Fq 'Existing body' "$tmp/body.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/body.md"
+
+downloaded=$("$root/gh-pr-image" download --pr 7 --dir "$tmp/downloads")
+[[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png" ]]
+[[ $(<"$downloaded") == 'fake png' ]]
+grep -Fq 'repos/facundoPri/demo/contents/gh-pr-images/pr-7/123-456-1-screen_shot.png?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
 
 printf 'ok\n'

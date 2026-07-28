@@ -7,6 +7,7 @@ Upload local images to GitHub and add them to a pull request.
 
 Usage:
   gh pr-image [images...] [--pr PR] [-R OWNER/REPO] [--comment | --body]
+  gh pr-image download [--pr PR] [-R OWNER/REPO] [--dir DIRECTORY] [--force]
 
 Options:
   --pr PR          Pull request number, URL, or branch (defaults to current branch)
@@ -14,6 +15,8 @@ Options:
   --comment        Add the uploaded images as a new PR comment
   --body           Append the uploaded images to the PR description
   --alt TEXT       Alt text for a single image (defaults to its filename)
+  --dir DIRECTORY  Download directory (defaults to ./pr-<number>-images)
+  --force          Replace files that already exist when downloading
   -h, --help       Show this help
 
 Without --comment or --body, the generated Markdown is printed to stdout.
@@ -31,7 +34,15 @@ repo=""
 pr=""
 mode="print"
 alt=""
+download_dir=""
+force=0
 images=()
+
+command="upload"
+if [[ ${1:-} == download ]]; then
+  command="download"
+  shift
+fi
 
 while (($#)); do
   case "$1" in
@@ -63,6 +74,13 @@ while (($#)); do
       shift 2
       ;;
     --alt=*) alt=${1#*=}; shift ;;
+    --dir)
+      (($# > 1)) || die "--dir needs a value"
+      download_dir=$2
+      shift 2
+      ;;
+    --dir=*) download_dir=${1#*=}; shift ;;
+    --force) force=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --)
       shift
@@ -74,8 +92,14 @@ while (($#)); do
   esac
 done
 
-((${#images[@]})) || die "provide at least one image"
-[[ -z $alt || ${#images[@]} -eq 1 ]] || die "--alt can only be used with one image"
+if [[ $command == upload ]]; then
+  ((${#images[@]})) || die "provide at least one image"
+  [[ -z $alt || ${#images[@]} -eq 1 ]] || die "--alt can only be used with one image"
+  [[ -z $download_dir && $force -eq 0 ]] || die "--dir and --force require the download command"
+else
+  ((${#images[@]} == 0)) || die "download does not accept image paths"
+  [[ $mode == print && -z $alt ]] || die "--comment, --body, and --alt cannot be used with download"
+fi
 
 if [[ -z $repo ]]; then
   repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
@@ -88,6 +112,58 @@ else
   pr_number=$(gh pr view -R "$repo" --json number --jq .number)
 fi
 [[ $pr_number =~ ^[0-9]+$ ]] || die "could not resolve a pull request"
+
+if [[ $command == download ]]; then
+  pr_text=$(gh pr view "$pr_number" -R "$repo" --json body,comments \
+    --jq '[.body, (.comments[]?.body // empty)] | .[]')
+  urls=()
+  shas=()
+  paths=()
+  while IFS= read -r url; do
+    [[ $url == "https://github.com/$repo/blob/"* ]] || continue
+    rest=${url#"https://github.com/$repo/blob/"}
+    sha=${rest%%/*}
+    path_with_query=${rest#*/}
+    path=${path_with_query%\?raw=true}
+    [[ $sha =~ ^[0-9a-f]{40}$ && $path == "gh-pr-images/pr-$pr_number/"* ]] || continue
+    urls+=("$url")
+    shas+=("$sha")
+    paths+=("$path")
+  done < <(
+    printf '%s\n' "$pr_text" |
+      grep -Eo 'https://github\.com/[^][()[:space:]]+/[^][()[:space:]]+/blob/[0-9a-f]{40}/gh-pr-images/pr-[0-9]+/[^][()[:space:]]+\?raw=true' |
+      sort -u
+  )
+  ((${#urls[@]})) || die "no gh-pr-image uploads found in pull request #$pr_number"
+
+  download_dir=${download_dir:-"pr-$pr_number-images"}
+  mkdir -p "$download_dir"
+  download_dir=$(cd "$download_dir" && pwd)
+  destinations=()
+
+  for path in "${paths[@]}"; do
+    destination="$download_dir/${path##*/}"
+    [[ $force -eq 1 || ! -e $destination ]] || die "file already exists (use --force): $destination"
+    destinations+=("$destination")
+  done
+
+  for ((i = 0; i < ${#urls[@]}; i++)); do
+    url=${urls[$i]}
+    sha=${shas[$i]}
+    path=${paths[$i]}
+    destination=${destinations[$i]}
+    temporary=$(mktemp "$download_dir/.gh-pr-image.XXXXXX")
+    if gh api -H 'Accept: application/vnd.github.raw+json' \
+      "repos/$repo/contents/$path?ref=$sha" >"$temporary"; then
+      mv -f "$temporary" "$destination"
+      printf '%s\n' "$destination"
+    else
+      rm -f "$temporary"
+      die "could not download: $url"
+    fi
+  done
+  exit 0
+fi
 
 for image in "${images[@]}"; do
   [[ -f $image ]] || die "not a file: $image"
