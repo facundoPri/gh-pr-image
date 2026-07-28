@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Upload local images to GitHub and add them to a pull request.
+
+Usage:
+  gh pr-image [images...] [--pr PR] [-R OWNER/REPO] [--comment | --body]
+
+Options:
+  --pr PR          Pull request number, URL, or branch (defaults to current branch)
+  -R, --repo REPO  Target repository in OWNER/REPO format
+  --comment        Add the uploaded images as a new PR comment
+  --body           Append the uploaded images to the PR description
+  --alt TEXT       Alt text for a single image (defaults to its filename)
+  -h, --help       Show this help
+
+Without --comment or --body, the generated Markdown is printed to stdout.
+EOF
+}
+
+die() {
+  printf 'gh pr-image: %s\n' "$*" >&2
+  exit 1
+}
+
+command -v gh >/dev/null 2>&1 || die "GitHub CLI is required: https://cli.github.com"
+
+repo=""
+pr=""
+mode="print"
+alt=""
+images=()
+
+while (($#)); do
+  case "$1" in
+    --pr)
+      (($# > 1)) || die "--pr needs a value"
+      pr=$2
+      shift 2
+      ;;
+    --pr=*) pr=${1#*=}; shift ;;
+    -R|--repo)
+      (($# > 1)) || die "$1 needs a value"
+      repo=$2
+      shift 2
+      ;;
+    --repo=*) repo=${1#*=}; shift ;;
+    --comment)
+      [[ $mode == print || $mode == comment ]] || die "choose either --comment or --body"
+      mode="comment"
+      shift
+      ;;
+    --body|--description)
+      [[ $mode == print || $mode == body ]] || die "choose either --comment or --body"
+      mode="body"
+      shift
+      ;;
+    --alt)
+      (($# > 1)) || die "--alt needs a value"
+      alt=$2
+      shift 2
+      ;;
+    --alt=*) alt=${1#*=}; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --)
+      shift
+      images+=("$@")
+      break
+      ;;
+    -*) die "unknown option: $1" ;;
+    *) images+=("$1"); shift ;;
+  esac
+done
+
+((${#images[@]})) || die "provide at least one image"
+[[ -z $alt || ${#images[@]} -eq 1 ]] || die "--alt can only be used with one image"
+
+if [[ -z $repo ]]; then
+  repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+fi
+[[ $repo == */* ]] || die "repository must be OWNER/REPO"
+
+if [[ -n $pr ]]; then
+  pr_number=$(gh pr view "$pr" -R "$repo" --json number --jq .number)
+else
+  pr_number=$(gh pr view -R "$repo" --json number --jq .number)
+fi
+[[ $pr_number =~ ^[0-9]+$ ]] || die "could not resolve a pull request"
+
+for image in "${images[@]}"; do
+  [[ -f $image ]] || die "not a file: $image"
+  [[ -s $image ]] || die "image is empty: $image"
+  bytes=$(wc -c <"$image" | tr -d ' ')
+  # ponytail: in-memory Base64 is enough for screenshots; use object storage if 25 MiB becomes a real need.
+  ((bytes <= 26214400)) || die "image exceeds the 25 MiB limit: $image"
+  case ${image##*.} in
+    png|PNG|jpg|JPG|jpeg|JPEG|gif|GIF|webp|WEBP|svg|SVG|bmp|BMP) ;;
+    *) die "unsupported image type: $image" ;;
+  esac
+done
+
+ref="gh-pr-images/pr-$pr_number"
+ref_result=$(gh api "repos/$repo/git/ref/$ref" --jq .object.sha 2>&1) && ref_exists=1 || ref_exists=0
+if ((ref_exists)); then
+  parent_sha=$ref_result
+elif [[ $ref_result == *"HTTP 404"* || $ref_result == *"Not Found"* ]]; then
+  default_branch=$(gh api "repos/$repo" --jq .default_branch)
+  parent_sha=$(gh api "repos/$repo/git/ref/heads/$default_branch" --jq .object.sha)
+else
+  die "$ref_result"
+fi
+
+base_tree=$(gh api "repos/$repo/git/commits/$parent_sha" --jq .tree.sha)
+entries=""
+paths=()
+alts=()
+index=0
+
+for image in "${images[@]}"; do
+  index=$((index + 1))
+  filename=${image##*/}
+  safe_name=$(printf '%s' "$filename" | sed 's/[^A-Za-z0-9._-]/_/g')
+  [[ -n $safe_name ]] || safe_name="image"
+  remote_path="gh-pr-images/pr-$pr_number/$(date +%s)-$$-$index-$safe_name"
+
+  blob_sha=$(
+    { printf '{"content":"'; base64 <"$image" | tr -d '\n'; printf '","encoding":"base64"}'; } |
+      gh api --method POST "repos/$repo/git/blobs" --input - --jq .sha
+  )
+
+  [[ -z $entries ]] || entries+=","
+  entries+="{\"path\":\"$remote_path\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$blob_sha\"}"
+  paths+=("$remote_path")
+  alts+=("${alt:-$safe_name}")
+done
+
+tree_sha=$(
+  printf '{"base_tree":"%s","tree":[%s]}' "$base_tree" "$entries" |
+    gh api --method POST "repos/$repo/git/trees" --input - --jq .sha
+)
+commit_sha=$(
+  printf '{"message":"gh-pr-image: add images for #%s","tree":"%s","parents":["%s"]}' \
+    "$pr_number" "$tree_sha" "$parent_sha" |
+    gh api --method POST "repos/$repo/git/commits" --input - --jq .sha
+)
+
+if ((ref_exists)); then
+  printf '{"sha":"%s"}' "$commit_sha" |
+    gh api --method PATCH "repos/$repo/git/refs/$ref" --input - --silent
+else
+  printf '{"ref":"refs/%s","sha":"%s"}' "$ref" "$commit_sha" |
+    gh api --method POST "repos/$repo/git/refs" --input - --silent
+fi
+
+markdown=""
+for ((i = 0; i < ${#paths[@]}; i++)); do
+  escaped_alt=$(printf '%s' "${alts[$i]}" | sed 's/\\/\\\\/g; s/]/\\]/g')
+  line="![$escaped_alt](https://github.com/$repo/blob/$commit_sha/${paths[$i]}?raw=true)"
+  [[ -z $markdown ]] || markdown+=$'\n\n'
+  markdown+=$line
+done
+
+case $mode in
+  print)
+    printf '%s\n' "$markdown"
+    ;;
+  comment)
+    printf '%s\n' "$markdown" | gh pr comment "$pr_number" -R "$repo" --body-file -
+    ;;
+  body)
+    # ponytail: this is a read/append/write; add conflict retries only if concurrent PR edits become common.
+    current_body=$(gh pr view "$pr_number" -R "$repo" --json body --jq .body)
+    {
+      [[ -z $current_body ]] || printf '%s\n\n' "$current_body"
+      printf '%s\n' "$markdown"
+    } | gh pr edit "$pr_number" -R "$repo" --body-file -
+    ;;
+esac
