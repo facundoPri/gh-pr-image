@@ -27,7 +27,7 @@ jobs:
         run: npm run test:screenshot
 
       - name: Install gh-pr-image
-        run: gh extension install facundoPri/gh-pr-image --pin v1.0.0
+        run: gh extension install facundoPri/gh-pr-image
 
       - name: Refresh the PR screenshot slot
         run: >-
