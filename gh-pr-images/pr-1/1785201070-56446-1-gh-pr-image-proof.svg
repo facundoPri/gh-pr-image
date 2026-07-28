@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2f81f7"/>
+      <stop offset="1" stop-color="#3fb950"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" rx="32" fill="url(#background)"/>
+  <rect x="54" y="54" width="1092" height="522" rx="24" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+  <circle cx="92" cy="92" r="8" fill="#f85149"/>
+  <circle cx="118" cy="92" r="8" fill="#d29922"/>
+  <circle cx="144" cy="92" r="8" fill="#3fb950"/>
+  <rect x="86" y="148" width="8" height="334" rx="4" fill="url(#accent)"/>
+  <text x="130" y="215" fill="#f0f6fc" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="66" font-weight="700">gh pr-image</text>
+  <text x="130" y="276" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30">Live GitHub workflow proof</text>
+  <text x="130" y="358" fill="#58a6ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28">upload → PR body + comment → download</text>
+  <text x="130" y="432" fill="#3fb950" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28">✓ token-native   ✓ private-repo compatible   ✓ agent-ready</text>
+  <text x="130" y="504" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22">facundoPri/gh-pr-image · 2026</text>
+</svg>
