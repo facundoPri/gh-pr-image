@@ -6,7 +6,7 @@ usage() {
 Upload local images to GitHub and add them to a pull request.
 
 Usage:
-  gh pr-image [images...] [--pr PR] [-R OWNER/REPO] [--comment | --body]
+  gh pr-image [images...] [--pr PR] [-R OWNER/REPO] [--comment | --body | --edit-comment ID]
   gh pr-image download [--pr PR] [-R OWNER/REPO] [--dir DIRECTORY] [--force]
 
 Options:
@@ -14,6 +14,9 @@ Options:
   -R, --repo REPO  Target repository in OWNER/REPO format
   --comment        Add the uploaded images as a new PR comment
   --body           Append the uploaded images to the PR description
+  --edit-comment ID
+                   Edit an existing PR comment by database ID or URL
+  --replace MARKER Replace one exact marker in --body or --edit-comment
   --alt TEXT       Alt text for a single image (defaults to its filename)
   --dir DIRECTORY  Download directory (defaults to ./pr-<number>-images)
   --force          Replace files that already exist when downloading
@@ -28,12 +31,26 @@ die() {
   exit 1
 }
 
+assert_one_marker() {
+  local content=$1 marker=$2 suffix
+  [[ $content == *"$marker"* ]] || die "marker not found: $marker"
+  suffix=${content#*"$marker"}
+  [[ $suffix != *"$marker"* ]] || die "marker appears more than once: $marker"
+}
+
+replace_marker() {
+  local content=$1 marker=$2 replacement=$3
+  printf '%s%s%s' "${content%%"$marker"*}" "$replacement" "${content#*"$marker"}"
+}
+
 command -v gh >/dev/null 2>&1 || die "GitHub CLI is required: https://cli.github.com"
 
 repo=""
 pr=""
 mode="print"
 alt=""
+marker=""
+comment_target=""
 download_dir=""
 force=0
 images=()
@@ -59,13 +76,37 @@ while (($#)); do
       ;;
     --repo=*) repo=${1#*=}; shift ;;
     --comment)
-      [[ $mode == print || $mode == comment ]] || die "choose either --comment or --body"
+      [[ $mode == print || $mode == comment ]] || die "choose one PR destination"
       mode="comment"
       shift
       ;;
     --body|--description)
-      [[ $mode == print || $mode == body ]] || die "choose either --comment or --body"
+      [[ $mode == print || $mode == body ]] || die "choose one PR destination"
       mode="body"
+      shift
+      ;;
+    --edit-comment)
+      (($# > 1)) || die "--edit-comment needs a value"
+      [[ $mode == print || $mode == edit_comment ]] || die "choose one PR destination"
+      mode="edit_comment"
+      comment_target=$2
+      shift 2
+      ;;
+    --edit-comment=*)
+      [[ $mode == print || $mode == edit_comment ]] || die "choose one PR destination"
+      mode="edit_comment"
+      comment_target=${1#*=}
+      shift
+      ;;
+    --replace)
+      (($# > 1)) || die "--replace needs a value"
+      marker=$2
+      [[ -n $marker ]] || die "--replace cannot be empty"
+      shift 2
+      ;;
+    --replace=*)
+      marker=${1#*=}
+      [[ -n $marker ]] || die "--replace cannot be empty"
       shift
       ;;
     --alt)
@@ -96,9 +137,11 @@ if [[ $command == upload ]]; then
   ((${#images[@]})) || die "provide at least one image"
   [[ -z $alt || ${#images[@]} -eq 1 ]] || die "--alt can only be used with one image"
   [[ -z $download_dir && $force -eq 0 ]] || die "--dir and --force require the download command"
+  [[ -z $marker || $mode == body || $mode == edit_comment ]] || die "--replace requires --body or --edit-comment"
+  [[ $mode != edit_comment || -n $marker ]] || die "--edit-comment requires --replace"
 else
   ((${#images[@]} == 0)) || die "download does not accept image paths"
-  [[ $mode == print && -z $alt ]] || die "--comment, --body, and --alt cannot be used with download"
+  [[ $mode == print && -z $alt && -z $marker ]] || die "upload options cannot be used with download"
 fi
 
 if [[ -z $repo ]]; then
@@ -178,6 +221,21 @@ for image in "${images[@]}"; do
   esac
 done
 
+replace_source=""
+comment_id=""
+if [[ $mode == body && -n $marker ]]; then
+  replace_source=$(gh pr view "$pr_number" -R "$repo" --json body --jq .body)
+  assert_one_marker "$replace_source" "$marker"
+elif [[ $mode == edit_comment ]]; then
+  comment_id=${comment_target##*issuecomment-}
+  [[ $comment_id =~ ^[0-9]+$ ]] || die "comment must be a database ID or issuecomment URL"
+  comment_endpoint="repos/$repo/issues/comments/$comment_id"
+  comment_issue_url=$(gh api "$comment_endpoint" --jq .issue_url)
+  [[ ${comment_issue_url##*/} == "$pr_number" ]] || die "comment $comment_id does not belong to pull request #$pr_number"
+  replace_source=$(gh api "$comment_endpoint" --jq .body)
+  assert_one_marker "$replace_source" "$marker"
+fi
+
 ref="gh-pr-images/pr-$pr_number"
 ref_result=$(gh api "repos/$repo/git/ref/$ref" --jq .object.sha 2>&1) && ref_exists=1 || ref_exists=0
 if ((ref_exists)); then
@@ -247,11 +305,20 @@ case $mode in
     printf '%s\n' "$markdown" | gh pr comment "$pr_number" -R "$repo" --body-file -
     ;;
   body)
-    # ponytail: this is a read/append/write; add conflict retries only if concurrent PR edits become common.
-    current_body=$(gh pr view "$pr_number" -R "$repo" --json body --jq .body)
-    {
-      [[ -z $current_body ]] || printf '%s\n\n' "$current_body"
-      printf '%s\n' "$markdown"
-    } | gh pr edit "$pr_number" -R "$repo" --body-file -
+    if [[ -n $marker ]]; then
+      replace_marker "$replace_source" "$marker" "$markdown" |
+        gh pr edit "$pr_number" -R "$repo" --body-file -
+    else
+      # ponytail: this is a read/append/write; add conflict retries only if concurrent PR edits become common.
+      current_body=$(gh pr view "$pr_number" -R "$repo" --json body --jq .body)
+      {
+        [[ -z $current_body ]] || printf '%s\n\n' "$current_body"
+        printf '%s\n' "$markdown"
+      } | gh pr edit "$pr_number" -R "$repo" --body-file -
+    fi
+    ;;
+  edit_comment)
+    updated_comment=$(replace_marker "$replace_source" "$marker" "$markdown")
+    gh api --method PATCH "$comment_endpoint" -f body="$updated_comment" --jq .html_url
     ;;
 esac

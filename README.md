@@ -14,6 +14,12 @@ gh pr-image screenshot.png --comment
 # Append it to the PR description
 gh pr-image before.png after.png --body
 
+# Replace an exact template marker in the PR description
+gh pr-image screenshot.png --body --replace '<!-- gh-pr-image:checkout -->'
+
+# Replace a marker in an existing PR comment
+gh pr-image screenshot.png --edit-comment 123456 --replace '<!-- gh-pr-image:checkout -->'
+
 # Download every image added by this extension from the PR
 gh pr-image download
 ```
@@ -26,6 +32,33 @@ gh pr-image download --pr 42 --repo owner/repo --dir /tmp/pr-images
 ```
 
 Run `gh pr-image --help` for all options.
+
+## Place images exactly
+
+Put a unique marker wherever the image belongs in a PR description or comment:
+
+```md
+## Checkout
+
+The updated payment flow:
+
+<!-- gh-pr-image:checkout -->
+
+## Test plan
+```
+
+Then replace that marker:
+
+```sh
+gh pr-image checkout.png --pr 42 --repo owner/repo \
+  --body --replace '<!-- gh-pr-image:checkout -->'
+
+gh pr-image checkout.png --pr 42 --repo owner/repo \
+  --edit-comment 'https://github.com/owner/repo/pull/42#issuecomment-123456' \
+  --replace '<!-- gh-pr-image:checkout -->'
+```
+
+The marker must occur exactly once, and it is checked before the image is uploaded. For any other workflow, omit the destination flag: `gh pr-image screenshot.png` prints normal image Markdown that an agent can place anywhere using the same PR or comment editing command it already uses for links.
 
 ## How it works
 
