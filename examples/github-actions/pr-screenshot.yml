@@ -1,0 +1,36 @@
+name: Add PR screenshot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  visual-proof:
+    # Fork and Dependabot PR tokens are read-only. Handle them in a separate,
+    # explicitly approved trusted workflow instead of using pull_request_target.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      GH_PR_IMAGE_PR: ${{ github.event.pull_request.number }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test and capture the UI
+        # Replace this with the project's real test and screenshot command.
+        run: npm run test:screenshot
+
+      - name: Install gh-pr-image
+        run: gh extension install facundoPri/gh-pr-image --pin v1.0.0
+
+      - name: Refresh the PR screenshot slot
+        run: >-
+          gh pr-image body replace artifacts/ui.png
+          --marker '<!-- gh-pr-image:visual-proof -->'
+          --alt 'Automated UI test result'

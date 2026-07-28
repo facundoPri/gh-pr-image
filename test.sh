@@ -17,7 +17,11 @@ case "$1 $2" in
     if [[ " $* " == *" --json body,comments "* ]]; then
       printf '%s\n' '![screen](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/123-456-1-screen_shot.png?raw=true)'
     elif [[ " $* " == *" --json body "* ]]; then
-      printf 'Existing body\n\n<!-- screenshot -->\n\nEnd\n'
+      if [[ -s $GH_PR_IMAGE_TEST_BODY ]]; then
+        cat "$GH_PR_IMAGE_TEST_BODY"
+      else
+        printf 'Existing body\n\n<!-- screenshot -->\n\nEnd\n'
+      fi
     else
       printf '7\n'
     fi
@@ -64,29 +68,48 @@ export GH_PR_IMAGE_TEST_BODY="$tmp/body.md"
 export GH_PR_IMAGE_TEST_EDIT_COMMENT="$tmp/edit-comment.md"
 printf 'fake png' >"$tmp/screen shot.png"
 
-markdown=$("$root/gh-pr-image" "$tmp/screen shot.png" --pr 7)
+markdown=$("$root/gh-pr-image" upload "$tmp/screen shot.png" --pr 7)
 [[ $markdown == '!['*'](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/'*'?raw=true)' ]]
 
-"$root/gh-pr-image" "$tmp/screen shot.png" --pr 7 --comment >/dev/null
+"$root/gh-pr-image" comment create "$tmp/screen shot.png" --pr 7 >/dev/null
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/comment.md"
 
-"$root/gh-pr-image" "$tmp/screen shot.png" --pr 7 --body >/dev/null
+"$root/gh-pr-image" body append "$tmp/screen shot.png" --pr 7 >/dev/null
 grep -Fq 'Existing body' "$tmp/body.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/body.md"
 
-"$root/gh-pr-image" "$tmp/screen shot.png" --pr 7 --body --replace '<!-- screenshot -->' >/dev/null
+"$root/gh-pr-image" body replace "$tmp/screen shot.png" --pr 7 --marker '<!-- screenshot -->' >/dev/null
 grep -Fq 'Existing body' "$tmp/body.md"
 grep -Fq 'End' "$tmp/body.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/body.md"
-! grep -Fq '<!-- screenshot -->' "$tmp/body.md"
+[[ $(grep -Fc '<!-- screenshot -->' "$tmp/body.md") -eq 2 ]]
 
-"$root/gh-pr-image" "$tmp/screen shot.png" --pr 7 \
-  --edit-comment 'https://github.com/facundoPri/demo/pull/7#issuecomment-99' \
-  --replace '<!-- screenshot -->' >/dev/null
+"$root/gh-pr-image" body replace "$tmp/screen shot.png" --pr 7 --marker '<!-- screenshot -->' >/dev/null
+[[ $(grep -Fc '<!-- screenshot -->' "$tmp/body.md") -eq 2 ]]
+[[ $(grep -Fc 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/body.md") -eq 1 ]]
+
+"$root/gh-pr-image" comment edit 'https://github.com/facundoPri/demo/pull/7#issuecomment-99' \
+  "$tmp/screen shot.png" --pr 7 --marker '<!-- screenshot -->' >/dev/null
 grep -Fq 'Before' "$tmp/edit-comment.md"
 grep -Fq 'After' "$tmp/edit-comment.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/edit-comment.md"
-! grep -Fq '<!-- screenshot -->' "$tmp/edit-comment.md"
+[[ $(grep -Fc '<!-- screenshot -->' "$tmp/edit-comment.md") -eq 2 ]]
+
+printf 'Before\n<!-- screenshot -->\nDo not delete\n<!-- screenshot -->\nAfter\n' >"$tmp/body.md"
+: >"$tmp/gh.log"
+if "$root/gh-pr-image" body replace "$tmp/screen shot.png" --pr 7 \
+  --marker '<!-- screenshot -->' >/dev/null 2>"$tmp/error.log"; then
+  printf 'unsafe duplicate markers were accepted\n' >&2
+  exit 1
+fi
+grep -Fq 'two markers must bound an existing gh-pr-image upload' "$tmp/error.log"
+! grep -Fq '/git/blobs' "$tmp/gh.log"
+
+GH_REPO=facundoPri/demo GH_PR_IMAGE_PR=7 \
+  "$root/gh-pr-image" upload "$tmp/screen shot.png" >/dev/null
+
+GH_REPO=facundoPri/demo GH_PR_IMAGE_PR= GITHUB_REF=refs/pull/7/merge \
+  "$root/gh-pr-image" upload "$tmp/screen shot.png" >/dev/null
 
 downloaded=$("$root/gh-pr-image" download --pr 7 --dir "$tmp/downloads")
 [[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png" ]]
