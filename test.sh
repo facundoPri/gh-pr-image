@@ -157,7 +157,8 @@ GH_REPO=facundoPri/demo GH_PR_IMAGE_PR= GITHUB_REF=refs/pull/7/merge \
   "$root/gh-pr-image" upload "$tmp/screen shot.png" >/dev/null
 
 downloaded=$("$root/gh-pr-image" download --pr 7 --dir "$tmp/downloads")
-[[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png"$'\n'"$tmp/downloads/123-456-2-demo.mp4.preview.gif"$'\n'"$tmp/downloads/123-456-2-demo.mp4" ]]
+# Download order follows the locale's sort order, so compare sorted paths.
+[[ $(printf '%s\n' "$downloaded" | LC_ALL=C sort) == "$tmp/downloads/123-456-1-screen_shot.png"$'\n'"$tmp/downloads/123-456-2-demo.mp4"$'\n'"$tmp/downloads/123-456-2-demo.mp4.preview.gif" ]]
 [[ $(<"$tmp/downloads/123-456-1-screen_shot.png") == 'fake png' ]]
 grep -Fq 'contents/gh-pr-images/pr-7/123-456-2-demo.mp4?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
 grep -Fq 'repos/facundoPri/demo/contents/gh-pr-images/pr-7/123-456-1-screen_shot.png?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
