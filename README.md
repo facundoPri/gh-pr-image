@@ -1,6 +1,6 @@
 # gh-pr-image
 
-Upload local screenshots with the GitHub CLI, place them exactly in pull request descriptions or comments, and download them again for AI inspection.
+Upload local screenshots and videos with the GitHub CLI, place them exactly in pull request descriptions or comments, and download them again for AI inspection.
 
 `gh-pr-image` is designed for agents and CI jobs. It uses the authenticated `gh` client, works with private repositories, and does not require browser cookies or GitHub's undocumented attachment-upload endpoint.
 
@@ -16,7 +16,7 @@ Upgrade later with `gh extension upgrade pr-image`.
 
 | Intent | Command |
 | --- | --- |
-| Upload and print image Markdown | `gh pr-image upload IMAGE...` |
+| Upload and print image or video Markdown | `gh pr-image upload FILE...` |
 | Add an image-only PR comment | `gh pr-image comment create IMAGE...` |
 | Append images to the PR description | `gh pr-image body append IMAGE...` |
 | Fill or refresh a description slot | `gh pr-image body replace IMAGE... --marker MARKER` |
@@ -50,6 +50,22 @@ Output:
 ```
 
 This is the most flexible interface for agents: an image behaves like any other Markdown link after upload.
+
+## Videos
+
+Every command also accepts `.mp4`, `.mov`, `.webm`, and `.m4v` files:
+
+```sh
+gh pr-image comment create demo.mp4 --pr 42 --repo owner/repo --alt 'Checkout demo'
+```
+
+GitHub only plays videos that were uploaded through its web editor, which needs browser cookies and an undocumented endpoint. Repository files cannot be embedded with `<video>`, and opening one downloads it. To keep the video visible in the PR, `gh-pr-image` uploads the video together with an animated GIF preview, made with `ffmpeg`, that links to the full file:
+
+```md
+[![Checkout demo](https://github.com/owner/repo/blob/<sha>/gh-pr-images/pr-42/<file>.preview.gif?raw=true)](https://github.com/owner/repo/blob/<sha>/gh-pr-images/pr-42/<file>?raw=true)
+```
+
+The preview shows the first 15 seconds at 8 fps and 640 px wide. Clicking it downloads the full video. If `ffmpeg` is not installed, or the preview fails, the video is still uploaded and added as a link: `[▶ Checkout demo](...)`. Set `GH_PR_IMAGE_FFMPEG` to use another `ffmpeg`, or set it to an empty value to skip previews.
 
 ## Place and refresh images exactly
 
@@ -97,6 +113,7 @@ The CLI is non-interactive when these values are set:
 | `GH_PR_IMAGE_PR` | Default PR number |
 | `GITHUB_REPOSITORY` | Automatic repository fallback in GitHub Actions |
 | `GITHUB_REF` | Automatically resolves `refs/pull/<number>/merge` events |
+| `GH_PR_IMAGE_FFMPEG` | `ffmpeg` used for video previews; empty disables previews |
 
 GitHub Actions needs only the permissions required by the operation:
 
@@ -129,7 +146,7 @@ npx skills update gh-pr-image
 
 ## Download images for AI inspection
 
-Download every image added by this extension from a PR:
+Download every image and video added by this extension from a PR, including video previews:
 
 ```sh
 gh pr-image download --pr 42 --repo owner/repo --dir /tmp/pr-images
@@ -143,11 +160,11 @@ The extension uses GitHub's documented Git Data API to write image blobs to `ref
 
 Images inherit the repository's visibility and remain available while the hidden ref exists. The token needs Contents write access to upload, plus permission to update the chosen PR surface.
 
-Supported formats: PNG, JPEG, GIF, WebP, SVG, and BMP, up to 25 MiB each.
+Supported formats: PNG, JPEG, GIF, WebP, SVG, BMP, MP4, MOV, WebM, and M4V, up to 25 MiB each.
 
 ## Development
 
-The extension is one Bash script with no runtime package dependencies.
+The extension is one Bash script with no runtime package dependencies. `ffmpeg` is optional and only used for video previews.
 
 ```sh
 ./test.sh
