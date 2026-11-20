@@ -16,6 +16,7 @@ case "$1 $2" in
   "pr view")
     if [[ " $* " == *" --json body,comments "* ]]; then
       printf '%s\n' '![screen](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/123-456-1-screen_shot.png?raw=true)'
+      printf '%s\n' '[![demo](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/123-456-2-demo.mp4.preview.gif?raw=true)](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/123-456-2-demo.mp4?raw=true)'
     elif [[ " $* " == *" --json body "* ]]; then
       if [[ -s $GH_PR_IMAGE_TEST_BODY ]]; then
         cat "$GH_PR_IMAGE_TEST_BODY"
@@ -61,15 +62,53 @@ esac
 EOF
 chmod +x "$tmp/bin/gh"
 
+cat >"$tmp/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_PR_IMAGE_TEST_LOG"
+for output; do :; done
+printf 'fake gif' >"$output"
+EOF
+chmod +x "$tmp/ffmpeg"
+export GH_PR_IMAGE_FFMPEG="$tmp/ffmpeg"
+
 export PATH="$tmp/bin:$PATH"
 export GH_PR_IMAGE_TEST_LOG="$tmp/gh.log"
 export GH_PR_IMAGE_TEST_COMMENT="$tmp/comment.md"
 export GH_PR_IMAGE_TEST_BODY="$tmp/body.md"
 export GH_PR_IMAGE_TEST_EDIT_COMMENT="$tmp/edit-comment.md"
 printf 'fake png' >"$tmp/screen shot.png"
+printf 'fake mp4' >"$tmp/demo.mp4"
+printf 'fake avi' >"$tmp/demo.avi"
+blob=https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7
 
 markdown=$("$root/gh-pr-image" upload "$tmp/screen shot.png" --pr 7)
 [[ $markdown == '!['*'](https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/gh-pr-images/pr-7/'*'?raw=true)' ]]
+
+# Videos get an animated GIF preview that links to the full video.
+: >"$tmp/gh.log"
+markdown=$("$root/gh-pr-image" upload "$tmp/demo.mp4" --pr 7)
+[[ $markdown == "[![demo.mp4]($blob/"*"-demo.mp4.preview.gif?raw=true)]($blob/"*"-demo.mp4?raw=true)" ]]
+[[ $(grep -c '/git/blobs' "$tmp/gh.log") -eq 2 ]]
+grep -Fq "$tmp/demo.mp4" "$tmp/gh.log"
+
+markdown=$("$root/gh-pr-image" upload "$tmp/screen shot.png" "$tmp/demo.mp4" --pr 7)
+[[ $markdown == "![screen_shot.png]($blob/"*"?raw=true)"$'\n\n'"[![demo.mp4]("*"-demo.mp4?raw=true)" ]]
+
+# Without ffmpeg, or when it fails, the video is still uploaded and linked.
+: >"$tmp/gh.log"
+markdown=$(GH_PR_IMAGE_FFMPEG= "$root/gh-pr-image" upload "$tmp/demo.mp4" --pr 7 --alt 'Demo run' 2>"$tmp/error.log")
+[[ $markdown == "[▶ Demo run]($blob/"*"-demo.mp4?raw=true)" ]]
+[[ $(grep -c '/git/blobs' "$tmp/gh.log") -eq 1 ]]
+grep -Fq 'adding a link only' "$tmp/error.log"
+
+markdown=$(GH_PR_IMAGE_FFMPEG=false "$root/gh-pr-image" upload "$tmp/demo.mp4" --pr 7 2>/dev/null)
+[[ $markdown == "[▶ demo.mp4]($blob/"*"-demo.mp4?raw=true)" ]]
+
+if "$root/gh-pr-image" upload "$tmp/demo.avi" --pr 7 >/dev/null 2>"$tmp/error.log"; then
+  printf 'unsupported file type was accepted\n' >&2
+  exit 1
+fi
+grep -Fq 'unsupported file type' "$tmp/error.log"
 
 "$root/gh-pr-image" comment create "$tmp/screen shot.png" --pr 7 >/dev/null
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/comment.md"
@@ -78,6 +117,7 @@ grep -Fq 'https://github.com/facundoPri/demo/blob/555555555555555555555555555555
 grep -Fq 'Existing body' "$tmp/body.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/body.md"
 
+: >"$tmp/body.md"
 "$root/gh-pr-image" body replace "$tmp/screen shot.png" --pr 7 --marker '<!-- screenshot -->' >/dev/null
 grep -Fq 'Existing body' "$tmp/body.md"
 grep -Fq 'End' "$tmp/body.md"
@@ -94,6 +134,11 @@ grep -Fq 'Before' "$tmp/edit-comment.md"
 grep -Fq 'After' "$tmp/edit-comment.md"
 grep -Fq 'https://github.com/facundoPri/demo/blob/5555555555555555555555555555555555555555/' "$tmp/edit-comment.md"
 [[ $(grep -Fc '<!-- screenshot -->' "$tmp/edit-comment.md") -eq 2 ]]
+
+"$root/gh-pr-image" body replace "$tmp/demo.mp4" --pr 7 --marker '<!-- screenshot -->' >/dev/null
+[[ $(grep -Fc '<!-- screenshot -->' "$tmp/body.md") -eq 2 ]]
+grep -Fq -- '-demo.mp4.preview.gif?raw=true)](' "$tmp/body.md"
+! grep -Fq 'screen_shot.png' "$tmp/body.md"
 
 printf 'Before\n<!-- screenshot -->\nDo not delete\n<!-- screenshot -->\nAfter\n' >"$tmp/body.md"
 : >"$tmp/gh.log"
@@ -112,8 +157,9 @@ GH_REPO=facundoPri/demo GH_PR_IMAGE_PR= GITHUB_REF=refs/pull/7/merge \
   "$root/gh-pr-image" upload "$tmp/screen shot.png" >/dev/null
 
 downloaded=$("$root/gh-pr-image" download --pr 7 --dir "$tmp/downloads")
-[[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png" ]]
-[[ $(<"$downloaded") == 'fake png' ]]
+[[ $downloaded == "$tmp/downloads/123-456-1-screen_shot.png"$'\n'"$tmp/downloads/123-456-2-demo.mp4.preview.gif"$'\n'"$tmp/downloads/123-456-2-demo.mp4" ]]
+[[ $(<"$tmp/downloads/123-456-1-screen_shot.png") == 'fake png' ]]
+grep -Fq 'contents/gh-pr-images/pr-7/123-456-2-demo.mp4?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
 grep -Fq 'repos/facundoPri/demo/contents/gh-pr-images/pr-7/123-456-1-screen_shot.png?ref=5555555555555555555555555555555555555555' "$tmp/gh.log"
 grep -Fq 'Accept: application/vnd.github.raw' "$tmp/gh.log"
 
