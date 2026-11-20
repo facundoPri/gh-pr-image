@@ -1,6 +1,6 @@
 # gh-pr-image
 
-Upload local screenshots with the GitHub CLI, place them exactly in pull request descriptions or comments, and download them again for AI inspection.
+Upload local screenshots and Markdown files with the GitHub CLI, place them exactly in pull request descriptions or comments, and download them again for AI inspection.
 
 `gh-pr-image` is designed for agents and CI jobs. It uses the authenticated `gh` client, works with private repositories, and does not require browser cookies or GitHub's undocumented attachment-upload endpoint.
 
@@ -50,6 +50,22 @@ Output:
 ```
 
 This is the most flexible interface for agents: an image behaves like any other Markdown link after upload.
+
+## Markdown files
+
+Markdown files (`.md`, `.markdown`) use the same commands, storage, and size limit as images. Instead of being embedded, they become an ordinary link to GitHub's rendered view of the file, which is useful for attaching reports, test summaries, or design notes that are too long for the PR description:
+
+```sh
+gh pr-image upload report.md --pr 42 --repo owner/repo
+```
+
+Output:
+
+```md
+[report.md](https://github.com/owner/repo/blob/<sha>/gh-pr-images/pr-42/<file>)
+```
+
+`--alt` sets the link text. Images and Markdown files can be mixed in one command, and `download` fetches both.
 
 ## Place and refresh images exactly
 
@@ -143,7 +159,7 @@ The extension uses GitHub's documented Git Data API to write image blobs to `ref
 
 Images inherit the repository's visibility and remain available while the hidden ref exists. The token needs Contents write access to upload, plus permission to update the chosen PR surface.
 
-Supported formats: PNG, JPEG, GIF, WebP, SVG, and BMP, up to 25 MiB each.
+Supported formats: PNG, JPEG, GIF, WebP, SVG, BMP, and Markdown (`.md`, `.markdown`), up to 25 MiB each.
 
 ## Development
 

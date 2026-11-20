@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Upload local images to GitHub and add them to a pull request.
+Upload local images or Markdown files to GitHub and add them to a pull request.
+Images are embedded; Markdown (.md) files are linked to GitHub's rendered view.
 
 Usage:
   gh pr-image upload IMAGE... [options]
@@ -17,7 +18,7 @@ Options:
   --pr PR          Pull request number, URL, or branch (defaults to current branch)
   -R, --repo REPO  Target repository in OWNER/REPO format
   --marker MARKER  Exact marker used by body replace or comment edit
-  --alt TEXT       Alt text for a single image (defaults to its filename)
+  --alt TEXT       Alt or link text for a single file (defaults to its filename)
   --dir DIRECTORY  Download directory (defaults to ./pr-<number>-images)
   --force          Replace files that already exist when downloading
   -h, --help       Show this help
@@ -55,7 +56,7 @@ assert_marker() {
     if ((count == 2)); then
       between=${content#*"$marker"}
       between=${between%%"$marker"*}
-      [[ $between == *"https://github.com/$repo/blob/"* && $between == *"/gh-pr-images/pr-$pr_number/"*"?raw=true"* ]] ||
+      [[ $between == *"https://github.com/$repo/blob/"*"/gh-pr-images/pr-$pr_number/"* ]] ||
         die "two markers must bound an existing gh-pr-image upload: $marker"
     fi
   else
@@ -260,13 +261,14 @@ if [[ $command == download ]]; then
     sha=${rest%%/*}
     path_with_query=${rest#*/}
     path=${path_with_query%\?raw=true}
+    path=${path%%[).,;:!?\'\"]}
     [[ $sha =~ ^[0-9a-f]{40}$ && $path == "gh-pr-images/pr-$pr_number/"* ]] || continue
     urls+=("$url")
     shas+=("$sha")
     paths+=("$path")
   done < <(
     printf '%s\n' "$pr_text" |
-      grep -Eo 'https://github\.com/[^][()[:space:]]+/[^][()[:space:]]+/blob/[0-9a-f]{40}/gh-pr-images/pr-[0-9]+/[^][()[:space:]]+\?raw=true' |
+      grep -Eo 'https://github\.com/[^][()[:space:]]+/[^][()[:space:]]+/blob/[0-9a-f]{40}/gh-pr-images/pr-[0-9]+/[^][()[:space:]?]+(\?raw=true)?' |
       sort -u
   )
   ((${#urls[@]})) || die "no gh-pr-image uploads found in pull request #$pr_number"
@@ -308,8 +310,8 @@ for image in "${images[@]}"; do
   # ponytail: in-memory Base64 is enough for screenshots; use object storage if 25 MiB becomes a real need.
   ((bytes <= 26214400)) || die "image exceeds the 25 MiB limit: $image"
   case ${image##*.} in
-    png|PNG|jpg|JPG|jpeg|JPEG|gif|GIF|webp|WEBP|svg|SVG|bmp|BMP) ;;
-    *) die "unsupported image type: $image" ;;
+    png|PNG|jpg|JPG|jpeg|JPEG|gif|GIF|webp|WEBP|svg|SVG|bmp|BMP|md|MD|markdown|MARKDOWN) ;;
+    *) die "unsupported file type (expected an image or .md): $image" ;;
   esac
 done
 
@@ -368,7 +370,7 @@ tree_sha=$(
     gh api --method POST "repos/$repo/git/trees" --input - --jq .sha
 )
 commit_sha=$(
-  printf '{"message":"gh-pr-image: add images for #%s","tree":"%s","parents":["%s"]}' \
+  printf '{"message":"gh-pr-image: add files for #%s","tree":"%s","parents":["%s"]}' \
     "$pr_number" "$tree_sha" "$parent_sha" |
     gh api --method POST "repos/$repo/git/commits" --input - --jq .sha
 )
@@ -384,7 +386,12 @@ fi
 markdown=""
 for ((i = 0; i < ${#paths[@]}; i++)); do
   escaped_alt=$(printf '%s' "${alts[$i]}" | sed 's/\\/\\\\/g; s/]/\\]/g')
-  line="![$escaped_alt](https://github.com/$repo/blob/$commit_sha/${paths[$i]}?raw=true)"
+  url="https://github.com/$repo/blob/$commit_sha/${paths[$i]}"
+  case ${paths[$i]##*.} in
+    # Markdown links to GitHub's rendered blob view instead of being embedded as an image.
+    md|MD|markdown|MARKDOWN) line="[$escaped_alt]($url)" ;;
+    *) line="![$escaped_alt]($url?raw=true)" ;;
+  esac
   [[ -z $markdown ]] || markdown+=$'\n\n'
   markdown+=$line
 done
