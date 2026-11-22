@@ -3,7 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Upload local images to GitHub and add them to a pull request.
+Upload local images and videos to GitHub and add them to a pull request.
+
+GitHub cannot play repository videos inline, so each video (.mp4, .mov, .webm,
+.m4v) is shown as an animated GIF preview, made with ffmpeg, that links to the
+full video. Without ffmpeg the video is added as a plain link.
 
 Usage:
   gh pr-image upload IMAGE... [options]
@@ -17,7 +21,7 @@ Options:
   --pr PR          Pull request number, URL, or branch (defaults to current branch)
   -R, --repo REPO  Target repository in OWNER/REPO format
   --marker MARKER  Exact marker used by body replace or comment edit
-  --alt TEXT       Alt text for a single image (defaults to its filename)
+  --alt TEXT       Alt text for a single file (defaults to its filename)
   --dir DIRECTORY  Download directory (defaults to ./pr-<number>-images)
   --force          Replace files that already exist when downloading
   -h, --help       Show this help
@@ -30,7 +34,26 @@ Environment:
   GH_REPO                  Default repository used by gh
   GH_PR_IMAGE_PR           Default pull request number for CI
   GITHUB_REPOSITORY        Repository fallback in GitHub Actions
+  GH_PR_IMAGE_FFMPEG       ffmpeg used for video previews (empty disables them)
 EOF
+}
+
+is_video() {
+  case ${1##*.} in
+    mp4|MP4|mov|MOV|webm|WEBM|m4v|M4V) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Writes a small animated GIF preview of a video, or fails.
+make_preview() {
+  local video=$1 preview=$2
+  [[ -n $ffmpeg ]] && command -v "$ffmpeg" >/dev/null 2>&1 || return 1
+  # ponytail: first 15 s at 8 fps and 640 px keeps the GIF to a few MiB; the link carries the full video.
+  "$ffmpeg" -nostdin -loglevel error -y -t 15 -i "$video" \
+    -vf 'fps=8,scale=640:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse' \
+    "$preview" || return 1
+  [[ -s $preview ]] && (($(wc -c <"$preview") <= 26214400))
 }
 
 die() {
@@ -92,6 +115,9 @@ comment_target=""
 download_dir=""
 force=0
 images=()
+ffmpeg=${GH_PR_IMAGE_FFMPEG-ffmpeg}
+preview_dir=""
+trap '[[ -z $preview_dir ]] || rm -rf "$preview_dir"' EXIT
 
 command="upload"
 case ${1:-} in
@@ -220,7 +246,7 @@ while (($#)); do
 done
 
 if [[ $command == upload ]]; then
-  ((${#images[@]})) || die "provide at least one image"
+  ((${#images[@]})) || die "provide at least one image or video"
   [[ -z $alt || ${#images[@]} -eq 1 ]] || die "--alt can only be used with one image"
   [[ -z $download_dir && $force -eq 0 ]] || die "--dir and --force require the download command"
   [[ -z $marker || $mode == body || $mode == edit_comment ]] || die "--marker requires body replace or comment edit"
@@ -303,13 +329,14 @@ fi
 
 for image in "${images[@]}"; do
   [[ -f $image ]] || die "not a file: $image"
-  [[ -s $image ]] || die "image is empty: $image"
+  [[ -s $image ]] || die "file is empty: $image"
   bytes=$(wc -c <"$image" | tr -d ' ')
   # ponytail: in-memory Base64 is enough for screenshots; use object storage if 25 MiB becomes a real need.
-  ((bytes <= 26214400)) || die "image exceeds the 25 MiB limit: $image"
+  ((bytes <= 26214400)) || die "file exceeds the 25 MiB limit: $image"
   case ${image##*.} in
     png|PNG|jpg|JPG|jpeg|JPEG|gif|GIF|webp|WEBP|svg|SVG|bmp|BMP) ;;
-    *) die "unsupported image type: $image" ;;
+    mp4|MP4|mov|MOV|webm|WEBM|m4v|M4V) ;;
+    *) die "unsupported file type (expected an image or video): $image" ;;
   esac
 done
 
@@ -345,6 +372,18 @@ paths=()
 alts=()
 index=0
 
+previews=()
+
+add_blob() {
+  local file=$1 remote_path=$2 blob_sha
+  blob_sha=$(
+    { printf '{"content":"'; base64 <"$file" | tr -d '\n'; printf '","encoding":"base64"}'; } |
+      gh api --method POST "repos/$repo/git/blobs" --input - --jq .sha
+  )
+  [[ -z $entries ]] || entries+=","
+  entries+="{\"path\":\"$remote_path\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$blob_sha\"}"
+}
+
 for image in "${images[@]}"; do
   index=$((index + 1))
   filename=${image##*/}
@@ -352,14 +391,20 @@ for image in "${images[@]}"; do
   [[ -n $safe_name ]] || safe_name="image"
   remote_path="gh-pr-images/pr-$pr_number/$(date +%s)-$$-$index-$safe_name"
 
-  blob_sha=$(
-    { printf '{"content":"'; base64 <"$image" | tr -d '\n'; printf '","encoding":"base64"}'; } |
-      gh api --method POST "repos/$repo/git/blobs" --input - --jq .sha
-  )
-
-  [[ -z $entries ]] || entries+=","
-  entries+="{\"path\":\"$remote_path\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$blob_sha\"}"
+  add_blob "$image" "$remote_path"
+  preview_path=""
+  if is_video "$image"; then
+    [[ -n $preview_dir ]] || preview_dir=$(mktemp -d "${TMPDIR:-/tmp}/gh-pr-image.XXXXXX")
+    preview="$preview_dir/$index.gif"
+    if make_preview "$image" "$preview"; then
+      preview_path="$remote_path.preview.gif"
+      add_blob "$preview" "$preview_path"
+    else
+      printf 'gh pr-image: no ffmpeg preview for %s; adding a link only\n' "$image" >&2
+    fi
+  fi
   paths+=("$remote_path")
+  previews+=("$preview_path")
   alts+=("${alt:-$safe_name}")
 done
 
@@ -368,7 +413,7 @@ tree_sha=$(
     gh api --method POST "repos/$repo/git/trees" --input - --jq .sha
 )
 commit_sha=$(
-  printf '{"message":"gh-pr-image: add images for #%s","tree":"%s","parents":["%s"]}' \
+  printf '{"message":"gh-pr-image: add media for #%s","tree":"%s","parents":["%s"]}' \
     "$pr_number" "$tree_sha" "$parent_sha" |
     gh api --method POST "repos/$repo/git/commits" --input - --jq .sha
 )
@@ -384,7 +429,14 @@ fi
 markdown=""
 for ((i = 0; i < ${#paths[@]}; i++)); do
   escaped_alt=$(printf '%s' "${alts[$i]}" | sed 's/\\/\\\\/g; s/]/\\]/g')
-  line="![$escaped_alt](https://github.com/$repo/blob/$commit_sha/${paths[$i]}?raw=true)"
+  url="https://github.com/$repo/blob/$commit_sha/${paths[$i]}?raw=true"
+  if [[ -n ${previews[$i]} ]]; then
+    line="[![$escaped_alt](https://github.com/$repo/blob/$commit_sha/${previews[$i]}?raw=true)]($url)"
+  elif is_video "${paths[$i]}"; then
+    line="[▶ $escaped_alt]($url)"
+  else
+    line="![$escaped_alt]($url)"
+  fi
   [[ -z $markdown ]] || markdown+=$'\n\n'
   markdown+=$line
 done

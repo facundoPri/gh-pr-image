@@ -1,6 +1,6 @@
 ---
 name: gh-pr-image
-description: Upload, place, update, and download UI screenshots in GitHub pull request descriptions and comments with the gh-pr-image GitHub CLI extension. Use when an agent needs to publish a local PNG, JPEG, GIF, WebP, SVG, or BMP as PR evidence, insert it at a stable Markdown marker, automate screenshot evidence in CI, or download PR images for visual inspection.
+description: Upload, place, update, and download UI screenshots in GitHub pull request descriptions and comments with the gh-pr-image GitHub CLI extension. Use when an agent needs to publish a local PNG, JPEG, GIF, WebP, SVG, or BMP, or an MP4, MOV, WebM, or M4V video, as PR evidence, insert it at a stable Markdown marker, automate screenshot evidence in CI, or download PR images for visual inspection.
 ---
 
 # GitHub PR Images
@@ -28,6 +28,8 @@ Use `gh-pr-image` for image storage and use native `gh pr` commands for general 
 | Fill or refresh a marked slot in the PR description | `gh pr-image body replace IMAGE --marker MARKER` |
 | Fill or refresh a marked slot in an existing comment | `gh pr-image comment edit COMMENT IMAGE --marker MARKER` |
 | Download extension-managed PR images for inspection | `gh pr-image download` |
+
+Videos (`.mp4`, `.mov`, `.webm`, `.m4v`) work with every upload command. GitHub cannot play repository videos inline, so the command uploads an animated GIF preview, made with `ffmpeg`, linked to the full video. Without `ffmpeg` it adds a plain `[▶ alt](...)` link and prints a warning. Keep clips short: the preview covers the first 15 seconds, and each file must be at most 25 MiB.
 
 Prefer `upload` when composing substantial text. Capture its stdout Markdown, insert it at the desired position, then use the native command that already owns the content: `gh pr create`, `gh pr edit`, `gh pr comment`, or `gh api` for a specific existing comment.
 
